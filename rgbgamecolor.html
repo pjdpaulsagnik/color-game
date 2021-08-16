@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-UA-Compatible" content="ie=edge">
+
+  <!-- Bootstrap CSS -->
+      <link rel="stylesheet" href="style.css" >
+      <link rel="stylesheet" href="styleBoot.css" >
+      <link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+
+  <title>Document</title>
+
+    <script src="functionalcolorgame.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.4.1/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>
+    <script src="jquerylatest3.4.1.js"></script>
+</head>
+<body>
+
+    <div class="jumbotron jumbotron-fluid" id="top">
+      <div class="container" align="center">
+        <h1 class="display-4">RGB Game</h1>
+        <p class="lead"><span id="colorCode"> Color Code : RGB() </span></p>
+      </div>
+    </div>
+
+  <a class="btn btn-primary mx-5" onclick="colorsetup();">COLOR Game</a>
+  <br>
+  <br>
+  <!-- The Modal -->
+  <div id="myModal1" class="modal">
+  <!-- Modal content -->
+  <div class="modal-content" align="center" >
+    <div class="w3-container w3-teal">
+      <div align="right">
+        <span class="close" onclick="originalstate();">&times;</span>
+      </div>
+    <h2>Wrong</h2>
+  </div>
+  </div>
+  </div>
+  <div id="myModal2" class="modal">
+  <!-- Modal content -->
+  <div class="modal-content" align="center" >
+    <div class="w3-container w3-teal">
+      <div align="right">
+        <span class="close" onclick="originalstate();">&times;</span>
+      </div>
+    <h2>Correct</h2>
+  </div>
+  </div>
+  </div>
+
+<div class="container" >
+
+  <div class="box mx-4" id ="first" data-toggle="tooltip" data-placement="top" title="Choose One Color" >
+
+  </div>
+
+  <div class="box mx-4" id ="second" data-toggle="tooltip" data-placement="top" title="Choose One Color" >
+
+  </div>
+
+  <div class="box mx-4" id ="third" data-toggle="tooltip" data-placement="top" title="Choose One Color" >
+
+  </div>
+
+  <div class="box mx-4" id ="fourth" data-toggle="tooltip" data-placement="top" title="Choose One Color" >
+
+  </div>
+
+  <div class="box mx-4" id ="fifth" data-toggle="tooltip" data-placement="top" title="Choose One Color" >
+
+  </div>
+
+  <div class="box mx-4" id ="sixth" data-toggle="tooltip" data-placement="top" title="Choose One Color" >
+
+  </div>
+</div>
+
+</body>
+</html>
