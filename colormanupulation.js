@@ -3,7 +3,7 @@ console.log("connected");
 
 boxes = document.getElementsByClassName("box");
 
-/* This is the first Function to be called */
+/* This is the first Function to be called === Practice*/
 
 var colorsetup = function () {
 
