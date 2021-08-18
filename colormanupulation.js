@@ -3,6 +3,8 @@ console.log("connected");
 
 boxes = document.getElementsByClassName("box");
 
+/* This is the first Function to be called */
+
 var colorsetup = function () {
 
    document.getElementById("top").style.background = "rgb(224,224,224)";
