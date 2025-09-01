@@ -48,7 +48,7 @@ jobs:
     - name: Install dependencies
       run: |
         npm init -y
-        npm install @octokit/rest axios
+        npm install @octokit/rest@18 axios
 
     - name: Create PR Tracker Script
       run: |
