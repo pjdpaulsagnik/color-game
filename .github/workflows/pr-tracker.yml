@@ -72,7 +72,18 @@ jobs:
               console.log('Starting PR tracking...');
               
               const eventType = process.env.GITHUB_EVENT_NAME;
-              const eventData = JSON.parse(process.env.GITHUB_EVENT_PATH || '{}');
+              let eventData = {};
+              
+              try {
+                const eventPath = process.env.GITHUB_EVENT_PATH;
+                if (eventPath && require('fs').existsSync(eventPath)) {
+                  const eventContent = require('fs').readFileSync(eventPath, 'utf8');
+                  eventData = JSON.parse(eventContent);
+                }
+              } catch (parseError) {
+                console.warn('Could not parse event data:', parseError.message);
+                console.log('Using empty event data');
+              }
               
               switch (eventType) {
                 case 'pull_request':
@@ -104,6 +115,11 @@ jobs:
           async handlePullRequestEvent(eventData) {
             const pr = eventData.pull_request;
             const action = eventData.action;
+            
+            if (!pr || !action) {
+              console.log('No PR data available, skipping event handling');
+              return;
+            }
             
             console.log(`Handling PR ${action} event for #${pr.number}`);
             
@@ -525,6 +541,9 @@ jobs:
         GITHUB_EVENT_PATH: ${{ github.event_path }}
         GITHUB_EVENT_NAME: ${{ github.event_name }}
         GITHUB_REPOSITORY: ${{ github.repository }}
+        ZENHUB_TOKEN: ${{ secrets.ZENHUB_TOKEN }}
+        ZENHUB_WORKSPACE_ID: ${{ secrets.ZENHUB_WORKSPACE_ID }}
+        TRACKER_WEBHOOK_URL: ${{ secrets.TRACKER_WEBHOOK_URL }}
 
   notify-on-failure:
     runs-on: ubuntu-latest
