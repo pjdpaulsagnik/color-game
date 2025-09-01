@@ -406,7 +406,7 @@ jobs:
               let targetPipeline = zenhubData.pipeline.name;
               
               if (action === 'opened') {
-                targetPipeline = 'New Issues';
+                targetPipeline = 'To Sync';
               } else if (action === 'closed' && zenhubData.merged) {
                 targetPipeline = 'Done';
               } else if (action === 'closed') {

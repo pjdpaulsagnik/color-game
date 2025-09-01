@@ -315,10 +315,10 @@ class PRTracker {
                     console.log(`✅ Created ZenHub issue for PR #${prNumber}`);
                     
                     // Move the issue to the appropriate pipeline
-                    await this.moveIssueToPipeline(issue.id, 'New Issues');
+                    await this.moveIssueToPipeline(issue.id, 'To Sync');
                     
                     return {
-                        pipeline: { name: 'New Issues' },
+                        pipeline: { name: 'To Sync' },
                         estimate: { value: 1 },
                         is_epic: false,
                         sprints: [],
@@ -387,6 +387,7 @@ class PRTracker {
         // This would need to be mapped from pipeline names to ZenHub pipeline IDs
         // For now, return a placeholder that should work with most ZenHub setups
         const pipelineMap = {
+            'To Sync': 'pipeline-to-sync',
             'New Issues': 'pipeline-new',
             'In Progress': 'pipeline-progress',
             'Review': 'pipeline-review',
@@ -394,7 +395,7 @@ class PRTracker {
             'Closed': 'pipeline-closed'
         };
         
-        return pipelineMap[pipelineName] || 'pipeline-new';
+        return pipelineMap[pipelineName] || 'pipeline-to-sync';
     }
 
     getDefaultZenHubData() {
