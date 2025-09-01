@@ -517,16 +517,13 @@ jobs:
           }
 
           getPipelineId(pipelineName) {
-            // This would need to be mapped from pipeline names to ZenHub pipeline IDs
+            // Map pipeline names to actual ZenHub pipeline IDs
             const pipelineMap = {
-              'New Issues': 'pipeline-1',
-              'In Progress': 'pipeline-2',
-              'Review': 'pipeline-3',
-              'Done': 'pipeline-4',
-              'Closed': 'pipeline-5'
+              'To Sync': 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTM',
+              'Doing': 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTQ'
             };
             
-            return pipelineMap[pipelineName] || 'pipeline-1';
+            return pipelineMap[pipelineName] || 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTM'; // Default to 'To Sync'
           }
         }
 
