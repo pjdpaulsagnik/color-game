@@ -1,6 +1,8 @@
 // ZEN TEST UPDATED
 console.log("connected");
 
+// FINALLY IT WILL WORK
+
 boxes = document.getElementsByClassName("box");
 
 /* This is the first Function to be called */

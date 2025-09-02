@@ -439,7 +439,17 @@ jobs:
               }
             }
             
+            // Add a summary section with just commit messages for quick reference
             body += `---\n\n`;
+            body += `## 📝 Quick Commit Summary\n\n`;
+            body += `**All pending commit messages:**\n\n`;
+            
+            for (const commit of unsyncedCommits) {
+              const commitMessage = commit.commit?.message?.split('\n')[0] || 'No message';
+              body += `• ${commitMessage}\n`;
+            }
+            
+            body += `\n---\n\n`;
             body += `## 🎯 Action Required\n\n`;
             body += `1. **Review** the commits above\n`;
             body += `2. **Merge** these changes to the practice branch\n`;
