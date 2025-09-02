@@ -1,4 +1,4 @@
-
+// TEST - FOR CHCK
 console.log("connected");
 
 boxes = document.getElementsByClassName("box");
