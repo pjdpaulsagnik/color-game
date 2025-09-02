@@ -138,11 +138,18 @@ jobs:
               // Get the merge commit and check if it needs syncing to practice branch
               const mergeCommit = await this.getMergeCommit(pr.number);
               if (mergeCommit) {
+                console.log(`📋 Found merge commit: ${mergeCommit.sha.substring(0, 7)}`);
                 const existsInPractice = await this.commitExistsInBranch(mergeCommit.sha, 'practice');
+                console.log(`🔍 Commit ${mergeCommit.sha.substring(0, 7)} exists in practice: ${existsInPractice}`);
+                
                 if (!existsInPractice) {
                   console.log(`📋 Merge commit ${mergeCommit.sha.substring(0, 7)} needs syncing to practice branch`);
                   await this.createCrossBranchSyncIssue(mergeCommit);
+                } else {
+                  console.log(`✅ Merge commit ${mergeCommit.sha.substring(0, 7)} already synced to practice branch`);
                 }
+              } else {
+                console.log(`❌ No merge commit found for PR #${pr.number}`);
               }
             }
             
