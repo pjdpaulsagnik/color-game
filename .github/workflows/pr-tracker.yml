@@ -1,0 +1,777 @@
+name: PR Tracker Automation
+
+on:
+  pull_request:
+    types: [opened, closed, reopened, edited, synchronize]
+  pull_request_review:
+    types: [submitted, dismissed]
+  push:
+    branches: [main, master, develop, practice]
+  schedule:
+    # Run every hour to check for updates
+    - cron: '0 * * * *'
+  workflow_dispatch:
+    inputs:
+      repository:
+        description: 'Repository to track (format: owner/repo)'
+        required: false
+        default: ''
+      force_refresh:
+        description: 'Force refresh all data'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  ZENHUB_TOKEN: ${{ secrets.ZENHUB_TOKEN }}
+  ZENHUB_WORKSPACE_ID: ${{ secrets.ZENHUB_WORKSPACE_ID }}
+  TRACKER_WEBHOOK_URL: ${{ secrets.TRACKER_WEBHOOK_URL }}
+
+jobs:
+  track-pull-requests:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' || github.event.schedule == '0 * * * *'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: |
+        npm init -y
+        npm install @octokit/rest@18 axios
+
+    - name: Create PR Tracker Script
+      run: |
+        cat > pr-tracker-action.js << 'EOF'
+        const { Octokit } = require('@octokit/rest');
+        const axios = require('axios');
+
+        class PRTrackerAction {
+          constructor() {
+            this.github = new Octokit({
+              auth: process.env.GITHUB_TOKEN
+            });
+            this.zenhubToken = process.env.ZENHUB_TOKEN;
+            this.webhookUrl = process.env.TRACKER_WEBHOOK_URL;
+            this.organization = process.env.GITHUB_REPOSITORY.split('/')[0];
+            this.repository = process.env.GITHUB_REPOSITORY.split('/')[1];
+          }
+
+          async run() {
+            try {
+              console.log('Starting PR tracking...');
+              
+              const eventType = process.env.GITHUB_EVENT_NAME;
+              let eventData = {};
+              
+              try {
+                const eventPath = process.env.GITHUB_EVENT_PATH;
+                if (eventPath && require('fs').existsSync(eventPath)) {
+                  const eventContent = require('fs').readFileSync(eventPath, 'utf8');
+                  eventData = JSON.parse(eventContent);
+                }
+              } catch (parseError) {
+                console.warn('Could not parse event data:', parseError.message);
+                console.log('Using empty event data');
+              }
+              
+              switch (eventType) {
+                case 'pull_request':
+                  await this.handlePullRequestEvent(eventData);
+                  break;
+                case 'pull_request_review':
+                  await this.handlePullRequestReviewEvent(eventData);
+                  break;
+                case 'push':
+                  await this.handlePushEvent(eventData);
+                  break;
+                case 'schedule':
+                  await this.handleScheduledUpdate();
+                  break;
+                case 'workflow_dispatch':
+                  await this.handleManualTrigger(eventData);
+                  break;
+                default:
+                  console.log(`Unhandled event type: ${eventType}`);
+              }
+              
+              console.log('PR tracking completed successfully');
+            } catch (error) {
+              console.error('Error in PR tracking:', error);
+              process.exit(1);
+            }
+          }
+
+          async handlePullRequestEvent(eventData) {
+            const pr = eventData.pull_request;
+            const action = eventData.action;
+            
+            if (!pr || !action) {
+              console.log('No PR data available, skipping event handling');
+              return;
+            }
+            
+            console.log(`Handling PR ${action} event for #${pr.number}`);
+            
+            const prData = await this.enrichPRData(pr);
+            const zenhubData = await this.fetchZenHubData(pr.number);
+            
+            // If this is a new PR and we have ZenHub data, create/update the issue
+            if (action === 'opened' && zenhubData.created) {
+              console.log(`✅ Created ZenHub issue for new PR #${pr.number}`);
+            }
+            
+            const trackingData = {
+              event_type: 'pull_request',
+              action: action,
+              pr_number: pr.number,
+              pr_title: pr.title,
+              pr_state: pr.state,
+              pr_merged: !!pr.merged_at,
+              author: pr.user.login,
+              repository: this.repository,
+              organization: this.organization,
+              created_at: pr.created_at,
+              updated_at: pr.updated_at,
+              merged_at: pr.merged_at,
+              html_url: pr.html_url,
+              zenhub_data: zenhubData,
+              timestamp: new Date().toISOString()
+            };
+
+            await this.sendToWebhook(trackingData);
+            await this.updateZenHubPipeline(pr.number, action, zenhubData);
+          }
+
+          async handlePullRequestReviewEvent(eventData) {
+            const review = eventData.review;
+            const pr = eventData.pull_request;
+            
+            console.log(`Handling PR review event for #${pr.number}`);
+            
+            const trackingData = {
+              event_type: 'pull_request_review',
+              action: eventData.action,
+              pr_number: pr.number,
+              pr_title: pr.title,
+              reviewer: review.user.login,
+              review_state: review.state,
+              review_body: review.body,
+              repository: this.repository,
+              organization: this.organization,
+              timestamp: new Date().toISOString()
+            };
+
+            await this.sendToWebhook(trackingData);
+          }
+
+          async handlePushEvent(eventData) {
+            const commits = eventData.commits || [];
+            const ref = eventData.ref;
+            const branch = ref.replace('refs/heads/', '');
+            
+            console.log(`Handling push event to ${branch}`);
+            
+            if (branch === 'main' || branch === 'master') {
+              // Check for commits that need to be synced to practice branch
+              await this.checkCrossBranchSync(commits);
+            } else if (branch === 'practice') {
+              // Check if any commits from main are now synced
+              await this.checkPracticeBranchSync(commits);
+            }
+            
+            // Check if any commits reference PRs
+            for (const commit of commits) {
+              const prNumbers = this.extractPRNumbers(commit.message);
+              
+              for (const prNumber of prNumbers) {
+                try {
+                  const pr = await this.github.rest.pulls.get({
+                    owner: this.organization,
+                    repo: this.repository,
+                    pull_number: prNumber
+                  });
+                  
+                  const trackingData = {
+                    event_type: 'push',
+                    pr_number: prNumber,
+                    pr_title: pr.data.title,
+                    commit_sha: commit.id,
+                    commit_message: commit.message,
+                    author: commit.author.username,
+                    repository: this.repository,
+                    organization: this.organization,
+                    timestamp: new Date().toISOString()
+                  };
+
+                  await this.sendToWebhook(trackingData);
+                } catch (error) {
+                  console.warn(`Could not fetch PR #${prNumber}:`, error.message);
+                }
+              }
+            }
+          }
+
+          async checkCrossBranchSync(commits) {
+            console.log('Checking cross-branch synchronization for main branch commits...');
+            
+            for (const commit of commits) {
+              try {
+                // Check if this commit exists in practice branch
+                const existsInPractice = await this.commitExistsInBranch(commit.id, 'practice');
+                
+                if (!existsInPractice) {
+                  console.log(`Commit ${commit.id.substring(0, 7)} needs to be synced to practice branch`);
+                  
+                  // Create ZenHub issue for cross-branch sync
+                  await this.createCrossBranchSyncIssue(commit);
+                }
+              } catch (error) {
+                console.warn(`Error checking commit ${commit.id}:`, error.message);
+              }
+            }
+          }
+
+          async checkPracticeBranchSync(commits) {
+            console.log('Checking practice branch sync status...');
+            
+            try {
+              // Get all commits from main that aren't in practice
+              const mainCommits = await this.getMainBranchCommits();
+              const practiceCommits = await this.getPracticeBranchCommits();
+              
+              for (const mainCommit of mainCommits) {
+                const existsInPractice = practiceCommits.some(pc => pc.sha === mainCommit.sha);
+                
+                if (existsInPractice) {
+                  // This commit is now synced, remove the sync issue
+                  await this.removeCrossBranchSyncIssue(mainCommit.sha);
+                }
+              }
+            } catch (error) {
+              console.warn('Error checking practice branch sync:', error.message);
+            }
+          }
+
+          async commitExistsInBranch(commitSha, branchName) {
+            try {
+              const response = await this.github.rest.repos.getCommit({
+                owner: this.organization,
+                repo: this.repository,
+                ref: `${branchName}:${commitSha}`
+              });
+              return true;
+            } catch (error) {
+              if (error.status === 404) {
+                return false;
+              }
+              throw error;
+            }
+          }
+
+          async getMainBranchCommits() {
+            try {
+              const response = await this.github.rest.repos.listCommits({
+                owner: this.organization,
+                repo: this.repository,
+                sha: 'main',
+                per_page: 50
+              });
+              return response.data;
+            } catch (error) {
+              console.warn('Error fetching main branch commits:', error.message);
+              return [];
+            }
+          }
+
+          async getPracticeBranchCommits() {
+            try {
+              const response = await this.github.rest.repos.listCommits({
+                owner: this.organization,
+                repo: this.repository,
+                sha: 'practice',
+                per_page: 50
+              });
+              return response.data;
+            } catch (error) {
+              console.warn('Error fetching practice branch commits:', error.message);
+              return [];
+            }
+          }
+
+          async createCrossBranchSyncIssue(commit) {
+            if (!this.zenhubToken) {
+              console.log('No ZenHub token, skipping cross-branch sync issue creation');
+              return;
+            }
+
+            try {
+              const issueTitle = `[SYNC NEEDED] ${commit.message.split('\n')[0]}`;
+              const issueBody = `**Commit:** ${commit.sha.substring(0, 7)}\n\n**Message:** ${commit.message}\n\n**Author:** @${commit.author.username}\n\n**Branch:** main → practice\n\n**Status:** ⏳ Waiting to be merged to practice branch\n\n**Action Required:** Merge this commit to practice branch to sync changes.`;
+
+              const createIssueMutation = `
+                mutation createIssue($input: CreateIssueInput!) {
+                  createIssue(input: $input) {
+                    issue {
+                      id
+                      number
+                      title
+                      pipelineIssue(workspaceId: "${process.env.ZENHUB_WORKSPACE_ID || '68b5e4dd7bd773001775b072'}") {
+                        pipeline {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const variables = {
+                input: {
+                  repositoryGhId: await this.getRepositoryGhId(),
+                  title: issueTitle,
+                  body: issueBody,
+                  estimate: { value: 1 },
+                  labels: [
+                    { name: 'Cross-Branch Sync', color: '#ff6b6b' },
+                    { name: 'iOS Update', color: '#4ecdc4' }
+                  ]
+                }
+              };
+
+              const response = await axios.post('https://api.zenhub.com/public/graphql', {
+                query: createIssueMutation,
+                variables: variables
+              }, {
+                headers: {
+                  'Authorization': `Bearer ${this.zenhubToken}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+
+              if (response.data.errors) {
+                console.warn('Error creating cross-branch sync issue:', response.data.errors);
+                return;
+              }
+
+              const issue = response.data.data?.createIssue?.issue;
+              if (issue) {
+                // Move issue to "iOS to be UPDATED" pipeline
+                await this.moveIssueToPipeline(issue.id, 'iOS to be UPDATED');
+                console.log(`✅ Created cross-branch sync issue for commit ${commit.sha.substring(0, 7)}`);
+              }
+            } catch (error) {
+              console.warn('Error creating cross-branch sync issue:', error.message);
+            }
+          }
+
+          async removeCrossBranchSyncIssue(commitSha) {
+            if (!this.zenhubToken) {
+              return;
+            }
+
+            try {
+              // Find and remove the sync issue for this commit
+              // This would require searching through issues or maintaining a mapping
+              console.log(`Commit ${commitSha.substring(0, 7)} is now synced to practice branch`);
+              // TODO: Implement issue removal logic
+            } catch (error) {
+              console.warn('Error removing cross-branch sync issue:', error.message);
+            }
+          }
+
+          async moveIssueToPipeline(issueId, pipelineName) {
+            try {
+              const moveMutation = `
+                mutation moveIssue($MoveIssueInput: MoveIssueInput!, $WorkspaceId: ID!) {
+                  moveIssue(input: $MoveIssueInput) {
+                    issue {
+                      id
+                      pipelineIssue(workspaceId: $WorkspaceId) {
+                        pipeline {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const variables = {
+                WorkspaceId: process.env.ZENHUB_WORKSPACE_ID || '68b5e4dd7bd773001775b072',
+                MoveIssueInput: {
+                  pipelineId: await this.getPipelineId(pipelineName),
+                  issueId: issueId,
+                  position: 0
+                }
+              };
+
+              await axios.post('https://api.zenhub.com/public/graphql', {
+                query: moveMutation,
+                variables: variables
+              }, {
+                headers: {
+                  'Authorization': `Bearer ${this.zenhubToken}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+
+              console.log(`Moved issue to ${pipelineName} pipeline`);
+            } catch (error) {
+              console.warn(`Error moving issue to ${pipelineName}:`, error.message);
+            }
+          }
+
+          async handleScheduledUpdate() {
+            console.log('Running scheduled PR update...');
+            
+            try {
+              const prs = await this.github.rest.pulls.list({
+                owner: this.organization,
+                repo: this.repository,
+                state: 'all',
+                per_page: 100,
+                sort: 'updated',
+                direction: 'desc'
+              });
+
+              for (const pr of prs.data) {
+                const zenhubData = await this.fetchZenHubData(pr.number);
+                
+                const trackingData = {
+                  event_type: 'scheduled_update',
+                  pr_number: pr.number,
+                  pr_title: pr.title,
+                  pr_state: pr.state,
+                  pr_merged: !!pr.merged_at,
+                  author: pr.user.login,
+                  repository: this.repository,
+                  organization: this.organization,
+                  updated_at: pr.updated_at,
+                  zenhub_data: zenhubData,
+                  timestamp: new Date().toISOString()
+                };
+
+                await this.sendToWebhook(trackingData);
+              }
+              
+              console.log(`Updated ${prs.data.length} pull requests`);
+            } catch (error) {
+              console.error('Error in scheduled update:', error);
+            }
+          }
+
+          async handleManualTrigger(eventData) {
+            const inputs = eventData.inputs || {};
+            const targetRepo = inputs.repository || this.repository;
+            
+            console.log(`Manual trigger for repository: ${targetRepo}`);
+            
+            if (inputs.force_refresh) {
+              await this.handleScheduledUpdate();
+            }
+          }
+
+          async enrichPRData(pr) {
+            try {
+              // Get additional PR data
+              const [commits, reviews, files] = await Promise.all([
+                this.github.rest.pulls.listCommits({
+                  owner: this.organization,
+                  repo: this.repository,
+                  pull_number: pr.number
+                }),
+                this.github.rest.pulls.listReviews({
+                  owner: this.organization,
+                  repo: this.repository,
+                  pull_number: pr.number
+                }),
+                this.github.rest.pulls.listFiles({
+                  owner: this.organization,
+                  repo: this.repository,
+                  pull_number: pr.number
+                })
+              ]);
+
+              return {
+                commits_count: commits.data.length,
+                reviews_count: reviews.data.length,
+                files_changed: files.data.length,
+                additions: files.data.reduce((sum, file) => sum + file.additions, 0),
+                deletions: files.data.reduce((sum, file) => sum + file.deletions, 0)
+              };
+            } catch (error) {
+              console.warn('Error enriching PR data:', error.message);
+              return {};
+            }
+          }
+
+          async fetchZenHubData(prNumber) {
+            if (!this.zenhubToken) {
+              return { error: 'No ZenHub token provided' };
+            }
+
+            try {
+              // Use ZenHub GraphQL API
+              const graphqlQuery = `
+                query getIssueInfo($repositoryGhId: Int!, $issueNumber: Int!, $workspaceId: ID!) {
+                  issueByInfo(repositoryGhId: $repositoryGhId, issueNumber: $issueNumber) {
+                    id
+                    repository {
+                      id
+                      ghId
+                    }
+                    number
+                    title
+                    body
+                    state
+                    estimate {
+                      value
+                    }
+                    sprints (first: 10) {
+                      nodes {
+                        id
+                        name
+                      }
+                    }
+                    labels (first: 10) {
+                      nodes {
+                        id
+                        name
+                        color
+                      }
+                    }
+                    pipelineIssue(workspaceId: $workspaceId) {
+                      priority {
+                        id
+                        name
+                        color
+                      }
+                      pipeline {
+                        id
+                        name
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const variables = {
+                repositoryGhId: await this.getRepositoryGhId(),
+                issueNumber: prNumber,
+                workspaceId: process.env.ZENHUB_WORKSPACE_ID || '68b5e4dd7bd773001775b072'
+              };
+
+              const response = await axios.post('https://api.zenhub.com/public/graphql', {
+                query: graphqlQuery,
+                variables: variables
+              }, {
+                headers: {
+                  'Authorization': `Bearer ${this.zenhubToken}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+
+              if (response.data.errors) {
+                console.warn(`ZenHub GraphQL errors for PR #${prNumber}:`, response.data.errors);
+                return this.getDefaultZenHubData();
+              }
+
+              const issue = response.data.data?.issueByInfo;
+              if (issue) {
+                return {
+                  pipeline: issue.pipelineIssue?.pipeline || { name: 'Unknown' },
+                  estimate: issue.estimate || { value: null },
+                  is_epic: false,
+                  sprints: issue.sprints?.nodes || [],
+                  labels: issue.labels?.nodes || [],
+                  priority: issue.pipelineIssue?.priority || null,
+                  zenhub_id: issue.id
+                };
+              }
+
+              return this.getDefaultZenHubData();
+            } catch (error) {
+              console.warn(`ZenHub GraphQL API error for PR #${prNumber}:`, error.message);
+              return this.getDefaultZenHubData();
+            }
+          }
+
+          getDefaultZenHubData() {
+            return {
+              pipeline: { name: 'Unknown' },
+              estimate: { value: null },
+              is_epic: false,
+              sprints: [],
+              labels: [],
+              priority: null
+            };
+          }
+
+          async getRepositoryGhId() {
+            try {
+              const response = await this.github.rest.repos.get({
+                owner: this.organization,
+                repo: this.repository
+              });
+              return response.data.id;
+            } catch (error) {
+              console.warn(`Error fetching GitHub repo ID:`, error.message);
+              return 0;
+            }
+          }
+
+          async updateZenHubPipeline(prNumber, action, zenhubData) {
+            if (!this.zenhubToken || !zenhubData.pipeline) {
+              return;
+            }
+
+            try {
+              // Determine target pipeline based on PR state
+              let targetPipeline = zenhubData.pipeline.name;
+              
+              if (action === 'opened') {
+                targetPipeline = 'To Sync';
+              } else if (action === 'closed' && zenhubData.merged) {
+                targetPipeline = 'Done';
+              } else if (action === 'closed') {
+                targetPipeline = 'Closed';
+              }
+
+              if (targetPipeline !== zenhubData.pipeline.name) {
+                // Use GraphQL mutation to move issue
+                const moveMutation = `
+                  mutation moveIssue($MoveIssueInput: MoveIssueInput!, $WorkspaceId: ID!) {
+                    moveIssue(input: $MoveIssueInput) {
+                      issue {
+                        id
+                        pipelineIssue(workspaceId: $WorkspaceId) {
+                          priority {
+                            id
+                            name
+                            color
+                          }
+                          pipeline {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                `;
+
+                const variables = {
+                  WorkspaceId: process.env.ZENHUB_WORKSPACE_ID || '68b5e4dd7bd773001775b072',
+                  MoveIssueInput: {
+                    pipelineId: await this.getPipelineId(targetPipeline),
+                    issueId: zenhubData.zenhub_id || `issue-${prNumber}`,
+                    position: 0
+                  }
+                };
+
+                await axios.post('https://api.zenhub.com/public/graphql', {
+                  query: moveMutation,
+                  variables: variables
+                }, {
+                  headers: {
+                    'Authorization': `Bearer ${this.zenhubToken}`,
+                    'Content-Type': 'application/json'
+                  }
+                });
+
+                console.log(`Moved PR #${prNumber} to ${targetPipeline} pipeline`);
+              }
+            } catch (error) {
+              console.warn(`Error updating ZenHub pipeline for PR #${prNumber}:`, error.message);
+            }
+          }
+
+          async sendToWebhook(data) {
+            if (!this.webhookUrl) {
+              console.log('No webhook URL configured, skipping webhook notification');
+              return;
+            }
+
+            try {
+              await axios.post(this.webhookUrl, data, {
+                headers: {
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'GitHub-PR-Tracker/1.0'
+                }
+              });
+
+              console.log(`Sent webhook notification for PR #${data.pr_number}`);
+            } catch (error) {
+              console.error('Error sending webhook:', error.message);
+            }
+          }
+
+          extractPRNumbers(commitMessage) {
+            const prRegex = /#(\d+)/g;
+            const matches = [];
+            let match;
+            
+            while ((match = prRegex.exec(commitMessage)) !== null) {
+              matches.push(parseInt(match[1]));
+            }
+            
+            return matches;
+          }
+
+          getRepoId() {
+            // This would need to be mapped from repository names to ZenHub repository IDs
+            // For now, return a placeholder
+            return 'placeholder-repo-id';
+          }
+
+          getPipelineId(pipelineName) {
+            // Map pipeline names to actual ZenHub pipeline IDs
+            const pipelineMap = {
+              'To Sync': 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTM',
+              'Doing': 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTQ',
+              'iOS to be UPDATED': 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTU' // New pipeline ID
+            };
+            
+            return pipelineMap[pipelineName] || 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTM'; // Default to 'To Sync'
+          }
+        }
+
+        // Run the action
+        const tracker = new PRTrackerAction();
+        tracker.run().catch(console.error);
+        EOF
+
+    - name: Run PR Tracker Action
+      run: node pr-tracker-action.js
+      env:
+        GITHUB_EVENT_PATH: ${{ github.event_path }}
+        GITHUB_EVENT_NAME: ${{ github.event_name }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        ZENHUB_TOKEN: ${{ secrets.ZENHUB_TOKEN }}
+        ZENHUB_WORKSPACE_ID: ${{ secrets.ZENHUB_WORKSPACE_ID }}
+        TRACKER_WEBHOOK_URL: ${{ secrets.TRACKER_WEBHOOK_URL }}
+
+  notify-on-failure:
+    runs-on: ubuntu-latest
+    needs: track-pull-requests
+    if: failure()
+    
+    steps:
+    - name: Notify on Failure
+      run: |
+        echo "PR Tracker Action failed for repository: ${{ github.repository }}"
+        echo "Event: ${{ github.event_name }}"
+        echo "Please check the logs for more details."
