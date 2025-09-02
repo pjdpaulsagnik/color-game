@@ -395,7 +395,7 @@ jobs:
                       id
                       number
                       title
-                      pipelineIssue(workspaceId: "${process.env.ZENHUB_WORKSPACE_ID || '68b5e4dd7bd773001775b072'}") {
+                      pipelineIssue(workspaceId: "${(process.env.ZENHUB_WORKSPACE_ID || 'mcc-workspace-68b5e4dd7bd773001775b072').split('-').pop()}") {
                         pipeline {
                           id
                           name
@@ -409,16 +409,15 @@ jobs:
               const repositoryGhId = await this.getRepositoryGhId();
               console.log(`📦 Repository GitHub ID: ${repositoryGhId}`);
               
+              // Convert GitHub repository ID to Base64 format for ZenHub
+              const repositoryId = Buffer.from(`0:${repositoryGhId}`).toString('base64');
+              
               const variables = {
                 input: {
-                  repositoryGhId: repositoryGhId,
+                  repositoryId: repositoryId,
                   title: issueTitle,
                   body: issueBody,
-                  estimate: { value: 1 },
-                  labels: [
-                    { name: 'Cross-Branch Sync', color: '#ff6b6b' },
-                    { name: 'iOS Update', color: '#4ecdc4' }
-                  ]
+                  labels: ["Cross-Branch Sync", "iOS Update"]
                 }
               };
 
