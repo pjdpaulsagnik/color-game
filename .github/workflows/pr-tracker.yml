@@ -131,27 +131,28 @@ jobs:
               console.log(`✅ Created ZenHub issue for new PR #${pr.number}`);
             }
             
-            // Handle cross-branch sync when PR is merged to main
-            if (action === 'closed' && pr.merged_at && pr.base.ref === 'main') {
-              console.log(`🔄 PR #${pr.number} merged to main - checking cross-branch sync...`);
-              
-              // Get the merge commit and check if it needs syncing to practice branch
-              const mergeCommit = await this.getMergeCommit(pr.number);
-              if (mergeCommit) {
-                console.log(`📋 Found merge commit: ${mergeCommit.sha.substring(0, 7)}`);
-                const existsInPractice = await this.commitExistsInBranch(mergeCommit.sha, 'practice');
-                console.log(`🔍 Commit ${mergeCommit.sha.substring(0, 7)} exists in practice: ${existsInPractice}`);
-                
-                if (!existsInPractice) {
-                  console.log(`📋 Merge commit ${mergeCommit.sha.substring(0, 7)} needs syncing to practice branch`);
-                  await this.createCrossBranchSyncIssue(mergeCommit);
-                } else {
-                  console.log(`✅ Merge commit ${mergeCommit.sha.substring(0, 7)} already synced to practice branch`);
-                }
-              } else {
-                console.log(`❌ No merge commit found for PR #${pr.number}`);
-              }
-            }
+                         // Handle cross-branch sync when PR is merged to main
+             if (action === 'closed' && pr.merged_at && pr.base.ref === 'main') {
+               console.log(`🔄 PR #${pr.number} merged to main - checking cross-branch sync...`);
+               
+               // Get the merge commit and check if it needs syncing to practice branch
+               const mergeCommit = await this.getMergeCommit(pr.number);
+               if (mergeCommit) {
+                 console.log(`📋 Found merge commit: ${mergeCommit.sha.substring(0, 7)}`);
+                 // Use the new logic for divergent branches
+                 const changesExistInPractice = await this.checkIfChangesExistInBranch(mergeCommit, 'practice');
+                 console.log(`🔍 Changes from commit ${mergeCommit.sha.substring(0, 7)} exist in practice: ${changesExistInPractice}`);
+                 
+                 if (!changesExistInPractice) {
+                   console.log(`📋 Changes from merge commit ${mergeCommit.sha.substring(0, 7)} need syncing to practice branch`);
+                   await this.createCrossBranchSyncIssue(mergeCommit);
+                 } else {
+                   console.log(`✅ Changes from merge commit ${mergeCommit.sha.substring(0, 7)} already synced to practice branch`);
+                 }
+               } else {
+                 console.log(`❌ No merge commit found for PR #${pr.number}`);
+               }
+             }
             
             const trackingData = {
               event_type: 'pull_request',
@@ -247,48 +248,48 @@ jobs:
             }
           }
 
-          async checkCrossBranchSync(commits) {
-            console.log('Checking cross-branch synchronization for main branch commits...');
-            
-            for (const commit of commits) {
-              try {
-                // Check if this commit exists in practice branch
-                const existsInPractice = await this.commitExistsInBranch(commit.id, 'practice');
-                
-                if (!existsInPractice) {
-                  console.log(`Commit ${commit.id.substring(0, 7)} needs to be synced to practice branch`);
-                  
-                  // Create ZenHub issue for cross-branch sync
-                  await this.createCrossBranchSyncIssue(commit);
-                } else {
-                  console.log(`Commit ${commit.id.substring(0, 7)} already exists in practice branch`);
-                }
-              } catch (error) {
-                console.warn(`Error checking commit ${commit.id}:`, error.message);
-              }
-            }
-          }
+                     async checkCrossBranchSync(commits) {
+             console.log('Checking cross-branch synchronization for main branch commits...');
+             
+             for (const commit of commits) {
+               try {
+                 // Use the new logic for divergent branches - check if changes exist
+                 const changesExistInPractice = await this.checkIfChangesExistInBranch(commit, 'practice');
+                 
+                 if (!changesExistInPractice) {
+                   console.log(`Changes from commit ${commit.id.substring(0, 7)} need to be synced to practice branch`);
+                   
+                   // Create ZenHub issue for cross-branch sync
+                   await this.createCrossBranchSyncIssue(commit);
+                 } else {
+                   console.log(`Changes from commit ${commit.id.substring(0, 7)} already exist in practice branch`);
+                 }
+               } catch (error) {
+                 console.warn(`Error checking commit ${commit.id}:`, error.message);
+               }
+             }
+           }
 
-          async checkPracticeBranchSync(commits) {
-            console.log('Checking practice branch sync status...');
-            
-            try {
-              // Get all commits from main that aren't in practice
-              const mainCommits = await this.getMainBranchCommits();
-              const practiceCommits = await this.getPracticeBranchCommits();
-              
-              for (const mainCommit of mainCommits) {
-                const existsInPractice = practiceCommits.some(pc => pc.sha === mainCommit.sha);
-                
-                if (existsInPractice) {
-                  // This commit is now synced, remove the sync issue
-                  await this.removeCrossBranchSyncIssue(mainCommit.sha);
-                }
-              }
-            } catch (error) {
-              console.warn('Error checking practice branch sync:', error.message);
-            }
-          }
+                     async checkPracticeBranchSync(commits) {
+             console.log('Checking practice branch sync status...');
+             
+             try {
+               // Get all commits from main that aren't in practice
+               const mainCommits = await this.getMainBranchCommits();
+               
+               for (const mainCommit of mainCommits) {
+                 // Use the new logic to check if changes exist in practice
+                 const changesExistInPractice = await this.checkIfChangesExistInBranch(mainCommit, 'practice');
+                 
+                 if (changesExistInPractice) {
+                   // Changes are now synced, remove the sync issue
+                   await this.removeCrossBranchSyncIssue(mainCommit.sha);
+                 }
+               }
+             } catch (error) {
+               console.warn('Error checking practice branch sync:', error.message);
+             }
+           }
 
           async commitExistsInBranch(commitSha, branchName) {
             try {
@@ -303,6 +304,62 @@ jobs:
                 return false;
               }
               throw error;
+            }
+          }
+
+          async checkIfChangesExistInBranch(commit, branchName) {
+            try {
+              console.log(`🔍 Checking if changes from commit ${commit.sha.substring(0, 7)} exist in ${branchName} branch...`);
+              
+              // Get the files changed in this commit
+              const commitDetails = await this.github.rest.repos.getCommit({
+                owner: this.organization,
+                repo: this.repository,
+                ref: commit.sha
+              });
+              
+              const filesChanged = commitDetails.data.files || [];
+              console.log(`   Files changed in commit: ${filesChanged.length}`);
+              
+              if (filesChanged.length === 0) {
+                console.log(`   No files changed, considering as synced`);
+                return true;
+              }
+              
+              // Compare main branch with the target branch to see if changes exist
+              const diff = await this.github.rest.repos.compareCommits({
+                owner: this.organization,
+                repo: this.repository,
+                base: branchName,
+                head: 'main'
+              });
+              
+              if (diff.data.files.length === 0) {
+                console.log(`   ✅ No differences between ${branchName} and main - changes are synced`);
+                return true;
+              }
+              
+              // Check if the specific files from our commit are in the diff
+              const changedFileNames = filesChanged.map(f => f.filename);
+              const diffFileNames = diff.data.files.map(f => f.filename);
+              
+              const hasUnsyncedChanges = changedFileNames.some(fileName => 
+                diffFileNames.includes(fileName)
+              );
+              
+              if (hasUnsyncedChanges) {
+                console.log(`   ❌ Changes from commit ${commit.sha.substring(0, 7)} are NOT synced to ${branchName}`);
+                console.log(`   Unsynced files: ${changedFileNames.filter(f => diffFileNames.includes(f)).join(', ')}`);
+              } else {
+                console.log(`   ✅ Changes from commit ${commit.sha.substring(0, 7)} are already synced to ${branchName}`);
+              }
+              
+              return !hasUnsyncedChanges;
+              
+            } catch (error) {
+              console.warn(`Error checking if changes exist in ${branchName}:`, error.message);
+              // If we can't determine, assume changes don't exist (safer approach)
+              return false;
             }
           }
 
@@ -369,24 +426,29 @@ jobs:
             }
           }
 
-          async createCrossBranchSyncIssue(commit) {
-            console.log(`🔄 Attempting to create cross-branch sync issue for commit ${commit.sha.substring(0, 7)}`);
-            console.log(`🔑 ZenHub Token: ${this.zenhubToken ? 'Present' : 'Missing'}`);
-            console.log(`🏢 Workspace ID: ${process.env.ZENHUB_WORKSPACE_ID || 'Missing'}`);
-            
-            if (!this.zenhubToken) {
-              console.log('❌ No ZenHub token, skipping cross-branch sync issue creation');
-              return;
-            }
-            
-            if (!process.env.ZENHUB_WORKSPACE_ID) {
-              console.log('❌ No ZenHub workspace ID, skipping cross-branch sync issue creation');
-              return;
-            }
+                     async createCrossBranchSyncIssue(commit) {
+             console.log(`🔄 Attempting to create cross-branch sync issue for commit ${commit.sha.substring(0, 7)}`);
+             console.log(`🔑 ZenHub Token: ${this.zenhubToken ? 'Present' : 'Missing'}`);
+             console.log(`🏢 Workspace ID: ${process.env.ZENHUB_WORKSPACE_ID || 'Missing'}`);
+             
+             if (!this.zenhubToken) {
+               console.log('❌ No ZenHub token, skipping cross-branch sync issue creation');
+               return;
+             }
+             
+             if (!process.env.ZENHUB_WORKSPACE_ID) {
+               console.log('❌ No ZenHub workspace ID, skipping cross-branch sync issue creation');
+               return;
+             }
 
-            try {
-              const issueTitle = `[SYNC NEEDED] ${commit.message.split('\n')[0]}`;
-              const issueBody = `**Commit:** ${commit.sha.substring(0, 7)}\n\n**Message:** ${commit.message}\n\n**Author:** @${commit.author.username}\n\n**Branch:** main → practice\n\n**Status:** ⏳ Waiting to be merged to practice branch\n\n**Action Required:** Merge this commit to practice branch to sync changes.`;
+             try {
+               // Handle both commit object formats (from PR merge vs push event)
+               const commitSha = commit.sha || commit.id;
+               const commitMessage = commit.message || commit.message;
+               const commitAuthor = commit.author?.username || commit.author?.name || 'Unknown';
+               
+               const issueTitle = `[SYNC NEEDED] ${commitMessage.split('\n')[0]}`;
+               const issueBody = `**Commit:** ${commitSha.substring(0, 7)}\n\n**Message:** ${commitMessage}\n\n**Author:** @${commitAuthor}\n\n**Branch:** main → practice\n\n**Status:** ⏳ Waiting to be merged to practice branch\n\n**Action Required:** Merge this commit to practice branch to sync changes.`;
 
               const createIssueMutation = `
                 mutation createIssue($input: CreateIssueInput!) {
