@@ -8,7 +8,7 @@ class CrossBranchSyncTester {
       auth: process.env.GITHUB_TOKEN
     });
     this.zenhubToken = process.env.ZENHUB_TOKEN;
-    this.workspaceId = process.env.ZENHUB_WORKSPACE_ID || '68b5e4dd7bd773001775b072';
+    this.workspaceId = '68b5e4dd7bd773001775b072'; // Use correct format
     this.organization = process.env.GITHUB_ORGANIZATION || 'pjdpaulsagnik';
     this.repository = 'color-game';
     this.graphqlEndpoint = 'https://api.zenhub.com/public/graphql';

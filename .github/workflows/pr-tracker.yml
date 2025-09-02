@@ -131,6 +131,21 @@ jobs:
               console.log(`✅ Created ZenHub issue for new PR #${pr.number}`);
             }
             
+            // Handle cross-branch sync when PR is merged to main
+            if (action === 'closed' && pr.merged_at && pr.base.ref === 'main') {
+              console.log(`🔄 PR #${pr.number} merged to main - checking cross-branch sync...`);
+              
+              // Get the merge commit and check if it needs syncing to practice branch
+              const mergeCommit = await this.getMergeCommit(pr.number);
+              if (mergeCommit) {
+                const existsInPractice = await this.commitExistsInBranch(mergeCommit.sha, 'practice');
+                if (!existsInPractice) {
+                  console.log(`📋 Merge commit ${mergeCommit.sha.substring(0, 7)} needs syncing to practice branch`);
+                  await this.createCrossBranchSyncIssue(mergeCommit);
+                }
+              }
+            }
+            
             const trackingData = {
               event_type: 'pull_request',
               action: action,
@@ -306,6 +321,39 @@ jobs:
             } catch (error) {
               console.warn('Error fetching practice branch commits:', error.message);
               return [];
+            }
+          }
+
+          async getMergeCommit(prNumber) {
+            try {
+              // Get the PR to find the merge commit SHA
+              const pr = await this.github.rest.pulls.get({
+                owner: this.organization,
+                repo: this.repository,
+                pull_number: prNumber
+              });
+              
+              if (pr.data.merge_commit_sha) {
+                // Get the merge commit details
+                const commit = await this.github.rest.repos.getCommit({
+                  owner: this.organization,
+                  repo: this.repository,
+                  ref: pr.data.merge_commit_sha
+                });
+                
+                return {
+                  sha: commit.data.sha,
+                  message: commit.data.commit.message,
+                  author: {
+                    username: commit.data.author?.login || commit.data.commit.author.name
+                  }
+                };
+              }
+              
+              return null;
+            } catch (error) {
+              console.warn(`Error fetching merge commit for PR #${prNumber}:`, error.message);
+              return null;
             }
           }
 
@@ -645,9 +693,9 @@ jobs:
               if (action === 'opened') {
                 targetPipeline = 'To Sync';
               } else if (action === 'closed' && zenhubData.merged) {
-                targetPipeline = 'Done';
+                targetPipeline = 'iOS to be UPDATED'; // Move to iOS pipeline when merged
               } else if (action === 'closed') {
-                targetPipeline = 'Closed';
+                targetPipeline = 'iOS to be UPDATED'; // Move to iOS pipeline when closed
               }
 
               if (targetPipeline !== zenhubData.pipeline.name) {
@@ -741,8 +789,7 @@ jobs:
             // Map pipeline names to actual ZenHub pipeline IDs
             const pipelineMap = {
               'To Sync': 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTM',
-              'Doing': 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTQ',
-              'iOS to be UPDATED': 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTU' // New pipeline ID
+              'iOS to be UPDATED': 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTQ'
             };
             
             return pipelineMap[pipelineName] || 'Z2lkOi8vcmFwdG9yL1BpcGVsaW5lLzM0OTE3MTM'; // Default to 'To Sync'

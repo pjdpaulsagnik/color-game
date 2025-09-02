@@ -109,12 +109,9 @@ class ZenHubPipelineCreator {
           workspace(id: $workspaceId) {
             id
             name
-            repositories {
-              nodes {
-                id
-                name
-                ghId
-              }
+            pipelines {
+              id
+              name
             }
           }
         }
@@ -140,7 +137,7 @@ class ZenHubPipelineCreator {
       const workspace = response.data.data?.workspace;
       if (workspace) {
         console.log(`✅ Successfully accessed workspace: ${workspace.name}`);
-        console.log(`   Repositories: ${workspace.repositories?.nodes?.length || 0}`);
+        console.log(`   Pipelines: ${workspace.pipelines?.length || 0}`);
         return true;
       }
 
