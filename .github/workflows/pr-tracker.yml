@@ -6,7 +6,7 @@ on:
   pull_request_review:
     types: [submitted, dismissed]
   push:
-    branches: [main, master, develop, practice]
+    branches: [main, master, develop, practice, zen-practice]
   schedule:
     # Run every hour to check for updates
     - cron: '0 * * * *'
