@@ -409,12 +409,12 @@ jobs:
               const repositoryGhId = await this.getRepositoryGhId();
               console.log(`📦 Repository GitHub ID: ${repositoryGhId}`);
               
-              // Convert GitHub repository ID to Base64 format for ZenHub
-              const repositoryId = Buffer.from(`0:${repositoryGhId}`).toString('base64');
+              // Use the correct ZenHub Repository ID
+              const zenhubRepoId = 'Z2lkOi8vcmFwdG9yL1JlcG9zaXRvcnkvMTM0NjUxOTY4';
               
               const variables = {
                 input: {
-                  repositoryId: repositoryId,
+                  repositoryId: zenhubRepoId,
                   title: issueTitle,
                   body: issueBody,
                   labels: ["Cross-Branch Sync", "iOS Update"]
