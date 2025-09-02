@@ -9,6 +9,8 @@
     "setup": "node setup.js",
     "get-workspace": "node get-workspace-id.js",
     "test-pr": "node test-pr-creation.js",
+    "create-ios-pipeline": "node create-ios-pipeline.js",
+    "test-cross-branch": "node test-cross-branch-sync.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
