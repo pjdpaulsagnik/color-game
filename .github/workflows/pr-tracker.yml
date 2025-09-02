@@ -364,6 +364,8 @@ jobs:
 
           async createCrossBranchSyncIssue(commit) {
             console.log(`🔄 Attempting to create cross-branch sync issue for commit ${commit.sha.substring(0, 7)}`);
+            console.log(`🔑 ZenHub Token: ${this.zenhubToken ? 'Present' : 'Missing'}`);
+            console.log(`🏢 Workspace ID: ${process.env.ZENHUB_WORKSPACE_ID || 'Missing'}`);
             
             if (!this.zenhubToken) {
               console.log('❌ No ZenHub token, skipping cross-branch sync issue creation');
@@ -397,9 +399,12 @@ jobs:
                 }
               `;
 
+              const repositoryGhId = await this.getRepositoryGhId();
+              console.log(`📦 Repository GitHub ID: ${repositoryGhId}`);
+              
               const variables = {
                 input: {
-                  repositoryGhId: await this.getRepositoryGhId(),
+                  repositoryGhId: repositoryGhId,
                   title: issueTitle,
                   body: issueBody,
                   estimate: { value: 1 },
@@ -421,9 +426,11 @@ jobs:
               });
 
               if (response.data.errors) {
-                console.warn('Error creating cross-branch sync issue:', response.data.errors);
+                console.error('❌ GraphQL errors creating cross-branch sync issue:', JSON.stringify(response.data.errors, null, 2));
                 return;
               }
+              
+              console.log(`📡 GraphQL response:`, JSON.stringify(response.data, null, 2));
 
               const issue = response.data.data?.createIssue?.issue;
               if (issue) {
