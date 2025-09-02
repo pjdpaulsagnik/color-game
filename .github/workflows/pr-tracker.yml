@@ -203,6 +203,9 @@ jobs:
             } else if (branch === 'practice') {
               // Check if any commits from main are now synced
               await this.checkPracticeBranchSync(commits);
+            } else if (branch === 'zen-practice') {
+              // This is our feature branch, no cross-branch sync needed here
+              console.log('zen-practice branch push - no cross-branch sync needed');
             }
             
             // Check if any commits reference PRs
@@ -250,6 +253,8 @@ jobs:
                   
                   // Create ZenHub issue for cross-branch sync
                   await this.createCrossBranchSyncIssue(commit);
+                } else {
+                  console.log(`Commit ${commit.id.substring(0, 7)} already exists in practice branch`);
                 }
               } catch (error) {
                 console.warn(`Error checking commit ${commit.id}:`, error.message);
@@ -358,8 +363,15 @@ jobs:
           }
 
           async createCrossBranchSyncIssue(commit) {
+            console.log(`🔄 Attempting to create cross-branch sync issue for commit ${commit.sha.substring(0, 7)}`);
+            
             if (!this.zenhubToken) {
-              console.log('No ZenHub token, skipping cross-branch sync issue creation');
+              console.log('❌ No ZenHub token, skipping cross-branch sync issue creation');
+              return;
+            }
+            
+            if (!process.env.ZENHUB_WORKSPACE_ID) {
+              console.log('❌ No ZenHub workspace ID, skipping cross-branch sync issue creation');
               return;
             }
 
