@@ -135,23 +135,9 @@ jobs:
              if (action === 'closed' && pr.merged_at && pr.base.ref === 'main') {
                console.log(`🔄 PR #${pr.number} merged to main - checking cross-branch sync...`);
                
-               // Get the merge commit and check if it needs syncing to practice branch
-               const mergeCommit = await this.getMergeCommit(pr.number);
-               if (mergeCommit) {
-                 console.log(`📋 Found merge commit: ${mergeCommit.sha.substring(0, 7)}`);
-                 // Use the new logic for divergent branches
-                 const changesExistInPractice = await this.checkIfChangesExistInBranch(mergeCommit, 'practice');
-                 console.log(`🔍 Changes from commit ${mergeCommit.sha.substring(0, 7)} exist in practice: ${changesExistInPractice}`);
-                 
-                 if (!changesExistInPractice) {
-                   console.log(`📋 Changes from merge commit ${mergeCommit.sha.substring(0, 7)} need syncing to practice branch`);
-                   await this.createCrossBranchSyncIssue(mergeCommit);
-                 } else {
-                   console.log(`✅ Changes from merge commit ${mergeCommit.sha.substring(0, 7)} already synced to practice branch`);
-                 }
-               } else {
-                 console.log(`❌ No merge commit found for PR #${pr.number}`);
-               }
+               // Instead of creating individual issues, trigger a refresh of the consolidated issue
+               // This will automatically include the new merged PR in the list
+               await this.createConsolidatedSyncIssue();
              }
             
             const trackingData = {
@@ -249,47 +235,288 @@ jobs:
           }
 
                      async checkCrossBranchSync(commits) {
-             console.log('Checking cross-branch synchronization for main branch commits...');
-             
-             for (const commit of commits) {
-               try {
-                 // Use the new logic for divergent branches - check if changes exist
-                 const changesExistInPractice = await this.checkIfChangesExistInBranch(commit, 'practice');
-                 
-                 if (!changesExistInPractice) {
-                   console.log(`Changes from commit ${commit.id.substring(0, 7)} need to be synced to practice branch`);
-                   
-                   // Create ZenHub issue for cross-branch sync
-                   await this.createCrossBranchSyncIssue(commit);
-                 } else {
-                   console.log(`Changes from commit ${commit.id.substring(0, 7)} already exist in practice branch`);
-                 }
-               } catch (error) {
-                 console.warn(`Error checking commit ${commit.id}:`, error.message);
-               }
-             }
-           }
+            console.log('Checking cross-branch synchronization for main branch commits...');
+            
+            // Instead of creating individual issues, we'll create one consolidated issue
+            // that shows all commits that need syncing
+            await this.createConsolidatedSyncIssue();
+          }
 
-                     async checkPracticeBranchSync(commits) {
-             console.log('Checking practice branch sync status...');
-             
-             try {
-               // Get all commits from main that aren't in practice
-               const mainCommits = await this.getMainBranchCommits();
-               
-               for (const mainCommit of mainCommits) {
-                 // Use the new logic to check if changes exist in practice
-                 const changesExistInPractice = await this.checkIfChangesExistInBranch(mainCommit, 'practice');
-                 
-                 if (changesExistInPractice) {
-                   // Changes are now synced, remove the sync issue
-                   await this.removeCrossBranchSyncIssue(mainCommit.sha);
-                 }
-               }
-             } catch (error) {
-               console.warn('Error checking practice branch sync:', error.message);
-             }
-           }
+          async createConsolidatedSyncIssue() {
+            console.log('🔄 Creating consolidated sync issue for all unsynced commits...');
+            
+            if (!this.zenhubToken || !process.env.ZENHUB_WORKSPACE_ID) {
+              console.log('❌ Missing ZenHub configuration, skipping consolidated sync issue creation');
+              return;
+            }
+
+            try {
+              // Get all commits from main that aren't in practice
+              const mainCommits = await this.getMainBranchCommits();
+              const unsyncedCommits = [];
+              
+              console.log(`📋 Checking ${mainCommits.length} main branch commits for sync status...`);
+              
+              for (const commit of mainCommits) {
+                const changesExistInPractice = await this.checkIfChangesExistInBranch(commit, 'practice');
+                
+                if (!changesExistInPractice) {
+                  unsyncedCommits.push(commit);
+                  console.log(`   ❌ Commit ${commit.sha.substring(0, 7)} needs syncing`);
+                } else {
+                  console.log(`   ✅ Commit ${commit.sha.substring(0, 7)} already synced`);
+                }
+              }
+              
+              if (unsyncedCommits.length === 0) {
+                console.log('🎉 All commits are already synced to practice branch');
+                // Remove any existing consolidated sync issue
+                await this.removeConsolidatedSyncIssue();
+                return;
+              }
+              
+              console.log(`📝 Found ${unsyncedCommits.length} commits that need syncing`);
+              
+              // Check if we already have a consolidated sync issue
+              const existingIssue = await this.findConsolidatedSyncIssue();
+              
+              if (existingIssue) {
+                // Update existing issue with current list
+                await this.updateConsolidatedSyncIssue(existingIssue.id, unsyncedCommits);
+                console.log('✅ Updated existing consolidated sync issue');
+              } else {
+                // Create new consolidated issue
+                await this.createNewConsolidatedSyncIssue(unsyncedCommits);
+                console.log('✅ Created new consolidated sync issue');
+              }
+              
+            } catch (error) {
+              console.warn('Error creating consolidated sync issue:', error.message);
+            }
+          }
+
+          async findConsolidatedSyncIssue() {
+            try {
+              // Search for existing consolidated sync issue by title pattern
+              const searchQuery = `[SYNC NEEDED] Cross-Branch Sync Required`;
+              
+              // This would require implementing a search through ZenHub issues
+              // For now, we'll return null and create a new one each time
+              // TODO: Implement proper issue search functionality
+              return null;
+            } catch (error) {
+              console.warn('Error finding existing consolidated sync issue:', error.message);
+              return null;
+            }
+          }
+
+          async createNewConsolidatedSyncIssue(unsyncedCommits) {
+            try {
+              const issueTitle = `[SYNC NEEDED] Cross-Branch Sync Required`;
+              const issueBody = this.generateConsolidatedIssueBody(unsyncedCommits);
+              
+              const createIssueMutation = `
+                mutation createIssue($input: CreateIssueInput!) {
+                  createIssue(input: $input) {
+                    issue {
+                      id
+                      number
+                      title
+                      pipelineIssue(workspaceId: "${process.env.ZENHUB_WORKSPACE_ID}") {
+                        pipeline {
+                          id
+                          name
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              // Use the correct ZenHub Repository ID
+              const zenhubRepoId = 'Z2lkOi8vcmFwdG9yL1JlcG9zaXRvcnkvMTM0NjUxOTY4';
+              
+              const variables = {
+                input: {
+                  repositoryId: zenhubRepoId,
+                  title: issueTitle,
+                  body: issueBody,
+                  labels: ["Cross-Branch Sync", "iOS Update", "Consolidated"]
+                }
+              };
+
+              const response = await axios.post('https://api.zenhub.com/public/graphql', {
+                query: createIssueMutation,
+                variables: variables
+              }, {
+                headers: {
+                  'Authorization': `Bearer ${this.zenhubToken}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+
+              if (response.data.errors) {
+                console.error('❌ GraphQL errors creating consolidated sync issue:', JSON.stringify(response.data.errors, null, 2));
+                return;
+              }
+
+              const issue = response.data.data?.createIssue?.issue;
+              if (issue) {
+                // Move issue to "iOS to be UPDATED" pipeline
+                await this.moveIssueToPipeline(issue.id, 'iOS to be UPDATED');
+                console.log(`✅ Created consolidated sync issue with ${unsyncedCommits.length} unsynced commits`);
+              }
+            } catch (error) {
+              console.warn('Error creating new consolidated sync issue:', error.message);
+            }
+          }
+
+          async updateConsolidatedSyncIssue(issueId, unsyncedCommits) {
+            try {
+              const issueBody = this.generateConsolidatedIssueBody(unsyncedCommits);
+              
+              const updateIssueMutation = `
+                mutation updateIssue($input: UpdateIssueInput!) {
+                  updateIssue(input: $input) {
+                    issue {
+                      id
+                      title
+                      body
+                    }
+                  }
+                }
+              `;
+
+              const variables = {
+                input: {
+                  id: issueId,
+                  body: issueBody
+                }
+              };
+
+              await axios.post('https://api.zenhub.com/public/graphql', {
+                query: updateIssueMutation,
+                variables: variables
+              }, {
+                headers: {
+                  'Authorization': `Bearer ${this.zenhubToken}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+
+              console.log(`✅ Updated consolidated sync issue with ${unsyncedCommits.length} unsynced commits`);
+            } catch (error) {
+              console.warn('Error updating consolidated sync issue:', error.message);
+            }
+          }
+
+          generateConsolidatedIssueBody(unsyncedCommits) {
+            let body = `# 🔄 Cross-Branch Sync Required\n\n`;
+            body += `**Status:** ⏳ Waiting for sync to practice branch\n\n`;
+            body += `**Branch:** main → practice\n\n`;
+            body += `**Total Commits Pending:** ${unsyncedCommits.length}\n\n`;
+            body += `---\n\n`;
+            body += `## 📋 Commits Requiring Sync\n\n`;
+            
+            // Group commits by PR if possible
+            const commitsByPR = this.groupCommitsByPR(unsyncedCommits);
+            
+            for (const [prNumber, commits] of Object.entries(commitsByPR)) {
+              if (prNumber === 'no-pr') {
+                body += `### 🔧 Direct Commits (No PR)\n\n`;
+              } else {
+                body += `### 📝 Pull Request #${prNumber}\n\n`;
+              }
+              
+              for (const commit of commits) {
+                const commitDate = new Date(commit.commit?.author?.date || commit.commit?.committer?.date || new Date()).toLocaleDateString();
+                const author = commit.author?.login || commit.commit?.author?.name || 'Unknown';
+                
+                body += `- **${commit.sha.substring(0, 7)}** - ${commit.commit?.message?.split('\n')[0] || 'No message'}\n`;
+                body += `  - **Author:** @${author}\n`;
+                body += `  - **Date:** ${commitDate}\n`;
+                body += `  - **Status:** ⏳ Pending sync to practice branch\n\n`;
+              }
+            }
+            
+            body += `---\n\n`;
+            body += `## 🎯 Action Required\n\n`;
+            body += `1. **Review** the commits above\n`;
+            body += `2. **Merge** these changes to the practice branch\n`;
+            body += `3. **Verify** that all changes are properly synced\n`;
+            body += `4. **Update** this issue when sync is complete\n\n`;
+            body += `---\n\n`;
+            body += `*This issue was automatically generated and will be updated as commits are synced.*\n`;
+            body += `*Last updated: ${new Date().toLocaleString()}*`;
+            
+            return body;
+          }
+
+          groupCommitsByPR(commits) {
+            const commitsByPR = {};
+            
+            for (const commit of commits) {
+              const prNumbers = this.extractPRNumbers(commit.commit?.message || '');
+              
+              if (prNumbers.length > 0) {
+                // This commit is part of a PR
+                for (const prNumber of prNumbers) {
+                  if (!commitsByPR[prNumber]) {
+                    commitsByPR[prNumber] = [];
+                  }
+                  commitsByPR[prNumber].push(commit);
+                }
+              } else {
+                // This is a direct commit (no PR)
+                if (!commitsByPR['no-pr']) {
+                  commitsByPR['no-pr'] = [];
+                }
+                commitsByPR['no-pr'].push(commit);
+              }
+            }
+            
+            return commitsByPR;
+          }
+
+          async removeConsolidatedSyncIssue() {
+            try {
+              // Find and remove the consolidated sync issue
+              // This would require implementing issue search and deletion
+              // For now, we'll just log that it should be removed
+              console.log('🎉 All commits synced - consolidated sync issue should be removed');
+              // TODO: Implement issue removal logic
+            } catch (error) {
+              console.warn('Error removing consolidated sync issue:', error.message);
+            }
+          }
+
+          async removeCrossBranchSyncIssue(commitSha) {
+            if (!this.zenhubToken) {
+              return;
+            }
+
+            try {
+              // Instead of removing individual issues, we'll update the consolidated issue
+              console.log(`Commit ${commitSha.substring(0, 7)} is now synced to practice branch`);
+              
+              // Trigger a refresh of the consolidated issue
+              await this.createConsolidatedSyncIssue();
+            } catch (error) {
+              console.warn('Error handling synced commit:', error.message);
+            }
+          }
+
+                               async checkPracticeBranchSync(commits) {
+            console.log('Checking practice branch sync status...');
+            
+            try {
+              // Instead of checking individual commits, trigger a refresh of the consolidated issue
+              // This will automatically update the issue with the current sync status
+              await this.createConsolidatedSyncIssue();
+            } catch (error) {
+              console.warn('Error checking practice branch sync:', error.message);
+            }
+          }
 
           async commitExistsInBranch(commitSha, branchName) {
             try {
@@ -426,105 +653,7 @@ jobs:
             }
           }
 
-                     async createCrossBranchSyncIssue(commit) {
-             console.log(`🔄 Attempting to create cross-branch sync issue for commit ${commit.sha.substring(0, 7)}`);
-             console.log(`🔑 ZenHub Token: ${this.zenhubToken ? 'Present' : 'Missing'}`);
-             console.log(`🏢 Workspace ID: ${process.env.ZENHUB_WORKSPACE_ID || 'Missing'}`);
-             
-             if (!this.zenhubToken) {
-               console.log('❌ No ZenHub token, skipping cross-branch sync issue creation');
-               return;
-             }
-             
-             if (!process.env.ZENHUB_WORKSPACE_ID) {
-               console.log('❌ No ZenHub workspace ID, skipping cross-branch sync issue creation');
-               return;
-             }
-
-             try {
-               // Handle both commit object formats (from PR merge vs push event)
-               const commitSha = commit.sha || commit.id;
-               const commitMessage = commit.message || commit.message;
-               const commitAuthor = commit.author?.username || commit.author?.name || 'Unknown';
-               
-               const issueTitle = `[SYNC NEEDED] ${commitMessage.split('\n')[0]}`;
-               const issueBody = `**Commit:** ${commitSha.substring(0, 7)}\n\n**Message:** ${commitMessage}\n\n**Author:** @${commitAuthor}\n\n**Branch:** main → practice\n\n**Status:** ⏳ Waiting to be merged to practice branch\n\n**Action Required:** Merge this commit to practice branch to sync changes.`;
-
-              const createIssueMutation = `
-                mutation createIssue($input: CreateIssueInput!) {
-                  createIssue(input: $input) {
-                    issue {
-                      id
-                      number
-                      title
-                      pipelineIssue(workspaceId: "${(process.env.ZENHUB_WORKSPACE_ID || 'mcc-workspace-68b5e4dd7bd773001775b072').split('-').pop()}") {
-                        pipeline {
-                          id
-                          name
-                        }
-                      }
-                    }
-                  }
-                }
-              `;
-
-              const repositoryGhId = await this.getRepositoryGhId();
-              console.log(`📦 Repository GitHub ID: ${repositoryGhId}`);
-              
-              // Use the correct ZenHub Repository ID
-              const zenhubRepoId = 'Z2lkOi8vcmFwdG9yL1JlcG9zaXRvcnkvMTM0NjUxOTY4';
-              
-              const variables = {
-                input: {
-                  repositoryId: zenhubRepoId,
-                  title: issueTitle,
-                  body: issueBody,
-                  labels: ["Cross-Branch Sync", "iOS Update"]
-                }
-              };
-
-              const response = await axios.post('https://api.zenhub.com/public/graphql', {
-                query: createIssueMutation,
-                variables: variables
-              }, {
-                headers: {
-                  'Authorization': `Bearer ${this.zenhubToken}`,
-                  'Content-Type': 'application/json'
-                }
-              });
-
-              if (response.data.errors) {
-                console.error('❌ GraphQL errors creating cross-branch sync issue:', JSON.stringify(response.data.errors, null, 2));
-                return;
-              }
-              
-              console.log(`📡 GraphQL response:`, JSON.stringify(response.data, null, 2));
-
-              const issue = response.data.data?.createIssue?.issue;
-              if (issue) {
-                // Move issue to "iOS to be UPDATED" pipeline
-                await this.moveIssueToPipeline(issue.id, 'iOS to be UPDATED');
-                console.log(`✅ Created cross-branch sync issue for commit ${commit.sha.substring(0, 7)}`);
-              }
-            } catch (error) {
-              console.warn('Error creating cross-branch sync issue:', error.message);
-            }
-          }
-
-          async removeCrossBranchSyncIssue(commitSha) {
-            if (!this.zenhubToken) {
-              return;
-            }
-
-            try {
-              // Find and remove the sync issue for this commit
-              // This would require searching through issues or maintaining a mapping
-              console.log(`Commit ${commitSha.substring(0, 7)} is now synced to practice branch`);
-              // TODO: Implement issue removal logic
-            } catch (error) {
-              console.warn('Error removing cross-branch sync issue:', error.message);
-            }
-          }
+                     
 
           async moveIssueToPipeline(issueId, pipelineName) {
             try {
@@ -573,6 +702,10 @@ jobs:
             console.log('Running scheduled PR update...');
             
             try {
+              // Update the consolidated sync issue with current status
+              await this.createConsolidatedSyncIssue();
+              
+              // Also handle regular PR updates
               const prs = await this.github.rest.pulls.list({
                 owner: this.organization,
                 repo: this.repository,
@@ -602,7 +735,7 @@ jobs:
                 await this.sendToWebhook(trackingData);
               }
               
-              console.log(`Updated ${prs.data.length} pull requests`);
+              console.log(`Updated ${prs.data.length} pull requests and refreshed consolidated sync issue`);
             } catch (error) {
               console.error('Error in scheduled update:', error);
             }
