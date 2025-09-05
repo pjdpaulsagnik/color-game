@@ -490,11 +490,98 @@ jobs:
 
           async removeConsolidatedSyncIssue() {
             try {
-              // Find and remove the consolidated sync issue
-              // This would require implementing issue search and deletion
-              // For now, we'll just log that it should be removed
-              console.log('🎉 All commits synced - consolidated sync issue should be removed');
-              // TODO: Implement issue removal logic
+              console.log('🎉 All commits synced - attempting to remove consolidated sync issue');
+              
+              if (!this.zenhubToken || !process.env.ZENHUB_WORKSPACE_ID) {
+                console.log('❌ Missing ZenHub configuration, cannot remove issue');
+                return;
+              }
+
+              // Find the consolidated sync issue by searching for issues with the specific title
+              const searchQuery = `
+                query searchIssues($repositoryId: ID!, $workspaceId: ID!) {
+                  repository(id: $repositoryId) {
+                    issues(first: 50) {
+                      nodes {
+                        id
+                        number
+                        title
+                        pipelineIssue(workspaceId: $workspaceId) {
+                          pipeline {
+                            id
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              `;
+
+              const zenhubRepoId = 'Z2lkOi8vcmFwdG9yL1JlcG9zaXRvcnkvMTM0NjUxOTY4';
+              
+              const searchResponse = await axios.post('https://api.zenhub.com/public/graphql', {
+                query: searchQuery,
+                variables: {
+                  repositoryId: zenhubRepoId,
+                  workspaceId: process.env.ZENHUB_WORKSPACE_ID
+                }
+              }, {
+                headers: {
+                  'Authorization': `Bearer ${this.zenhubToken}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+
+              if (searchResponse.data.errors) {
+                console.error('❌ GraphQL errors searching for issues:', JSON.stringify(searchResponse.data.errors, null, 2));
+                return;
+              }
+
+              // Find the consolidated sync issue
+              const issues = searchResponse.data.data?.repository?.issues?.nodes || [];
+              const syncIssue = issues.find(issue => 
+                issue.title.includes('[SYNC NEEDED] Cross-Branch Sync Required') &&
+                issue.pipelineIssue?.pipeline?.name === 'iOS to be UPDATED'
+              );
+
+              if (syncIssue) {
+                console.log(`📋 Found consolidated sync issue #${syncIssue.number}, removing...`);
+                
+                // Close the issue (ZenHub doesn't have a direct delete mutation)
+                const closeMutation = `
+                  mutation closeIssue($input: CloseIssueInput!) {
+                    closeIssue(input: $input) {
+                      issue {
+                        id
+                        state
+                      }
+                    }
+                  }
+                `;
+
+                const closeResponse = await axios.post('https://api.zenhub.com/public/graphql', {
+                  query: closeMutation,
+                  variables: {
+                    input: {
+                      issueId: syncIssue.id
+                    }
+                  }
+                }, {
+                  headers: {
+                    'Authorization': `Bearer ${this.zenhubToken}`,
+                    'Content-Type': 'application/json'
+                  }
+                });
+
+                if (closeResponse.data.errors) {
+                  console.error('❌ GraphQL errors closing issue:', JSON.stringify(closeResponse.data.errors, null, 2));
+                } else {
+                  console.log(`✅ Successfully closed consolidated sync issue #${syncIssue.number}`);
+                }
+              } else {
+                console.log('ℹ️ No consolidated sync issue found to remove');
+              }
             } catch (error) {
               console.warn('Error removing consolidated sync issue:', error.message);
             }
