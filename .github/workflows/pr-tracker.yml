@@ -281,14 +281,17 @@ jobs:
               console.log(`🔍 Looking for recent PR commits...`);
               const recentPRCommits = mainCommits.filter(commit => {
                 const message = commit.commit?.message || '';
-                return message.includes('#92') || message.includes('#93') || message.includes('#94') || 
-                       message.includes('#95') || message.includes('#96') || message.includes('#97') ||
-                       message.includes('#98') || message.includes('#99') || message.includes('#100');
+                // Extract all PR numbers from commit message dynamically
+                const prNumbers = this.extractPRNumbers(message);
+                return prNumbers.length > 0;
               });
               
               if (recentPRCommits.length > 0) {
                 console.log(`📋 Found ${recentPRCommits.length} recent PR commits:`, 
-                  recentPRCommits.map(c => `${c.sha.substring(0, 7)} - ${c.commit?.message?.split('\n')[0]}`));
+                  recentPRCommits.map(c => {
+                    const prNumbers = this.extractPRNumbers(c.commit?.message || '');
+                    return `${c.sha.substring(0, 7)} - PRs: [${prNumbers.join(', ')}] - ${c.commit?.message?.split('\n')[0]}`;
+                  }));
               }
               
               for (const commit of mainCommits) {
@@ -304,8 +307,10 @@ jobs:
               
               if (unsyncedCommits.length === 0) {
                 console.log('🎉 All commits are already synced to practice branch');
+                console.log('🔄 Attempting to remove consolidated sync issue...');
                 // Remove any existing consolidated sync issue
                 await this.removeConsolidatedSyncIssue();
+                console.log('✅ Issue removal process completed');
                 return;
               }
               
@@ -443,7 +448,7 @@ jobs:
               });
 
               console.log(`✅ Updated consolidated sync issue with ${unsyncedCommits.length} unsynced commits`);
-            } catch (error) {
+             } catch (error) {
               console.warn('Error updating consolidated sync issue:', error.message);
             }
           }
@@ -529,6 +534,8 @@ jobs:
           async removeConsolidatedSyncIssue() {
             try {
               console.log('🎉 All commits synced - attempting to remove consolidated sync issue');
+              console.log(`🔑 ZenHub token present: ${!!this.zenhubToken}`);
+              console.log(`🏢 ZenHub workspace ID: ${process.env.ZENHUB_WORKSPACE_ID || 'NOT SET'}`);
               
               if (!this.zenhubToken || !process.env.ZENHUB_WORKSPACE_ID) {
                 console.log('❌ Missing ZenHub configuration, cannot remove issue');
@@ -578,6 +585,16 @@ jobs:
 
               // Find the consolidated sync issue
               const issues = searchResponse.data.data?.repository?.issues?.nodes || [];
+              console.log(`📋 Found ${issues.length} total issues in repository`);
+              
+              // Look for any issues in "iOS to be UPDATED" pipeline
+              const iosIssues = issues.filter(issue => 
+                issue.pipelineIssue?.pipeline?.name === 'iOS to be UPDATED'
+              );
+              
+              console.log(`📋 Found ${iosIssues.length} issues in "iOS to be UPDATED" pipeline:`, 
+                iosIssues.map(i => `#${i.number} - ${i.title}`));
+              
               const syncIssue = issues.find(issue => 
                 issue.title.includes('[SYNC NEEDED] Cross-Branch Sync Required') &&
                 issue.pipelineIssue?.pipeline?.name === 'iOS to be UPDATED'
@@ -585,43 +602,61 @@ jobs:
 
               if (syncIssue) {
                 console.log(`📋 Found consolidated sync issue #${syncIssue.number}, removing...`);
-                
-                // Close the issue (ZenHub doesn't have a direct delete mutation)
-                const closeMutation = `
-                  mutation closeIssue($input: CloseIssueInput!) {
-                    closeIssue(input: $input) {
-                      issue {
-                        id
-                        state
-                      }
-                    }
-                  }
-                `;
-
-                const closeResponse = await axios.post('https://api.zenhub.com/public/graphql', {
-                  query: closeMutation,
-                  variables: {
-                    input: {
-                      issueId: syncIssue.id
-                    }
-                  }
-                }, {
-                  headers: {
-                    'Authorization': `Bearer ${this.zenhubToken}`,
-                    'Content-Type': 'application/json'
-                  }
-                });
-
-                if (closeResponse.data.errors) {
-                  console.error('❌ GraphQL errors closing issue:', JSON.stringify(closeResponse.data.errors, null, 2));
-                } else {
-                  console.log(`✅ Successfully closed consolidated sync issue #${syncIssue.number}`);
-                }
+                await this.closeIssue(syncIssue);
               } else {
                 console.log('ℹ️ No consolidated sync issue found to remove');
               }
+              
+              // Also close any other issues in "iOS to be UPDATED" pipeline if all commits are synced
+              if (iosIssues.length > 0) {
+                console.log(`🔄 All commits synced - closing all ${iosIssues.length} issues in "iOS to be UPDATED" pipeline`);
+                for (const issue of iosIssues) {
+                  console.log(`🔄 Closing issue #${issue.number}: ${issue.title}`);
+                  await this.closeIssue(issue);
+                }
+              }
             } catch (error) {
               console.warn('Error removing consolidated sync issue:', error.message);
+            }
+          }
+
+          async closeIssue(issue) {
+            try {
+              console.log(`🔄 Closing issue #${issue.number}: ${issue.title}`);
+              
+              // Close the issue (ZenHub doesn't have a direct delete mutation)
+              const closeMutation = `
+                mutation closeIssue($input: CloseIssueInput!) {
+                  closeIssue(input: $input) {
+                    issue {
+                      id
+                      state
+                    }
+                  }
+                }
+              `;
+
+              const closeResponse = await axios.post('https://api.zenhub.com/public/graphql', {
+                query: closeMutation,
+                variables: {
+                  input: {
+                    issueId: issue.id
+                  }
+                }
+              }, {
+                headers: {
+                  'Authorization': `Bearer ${this.zenhubToken}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+
+              if (closeResponse.data.errors) {
+                console.error(`❌ GraphQL errors closing issue #${issue.number}:`, JSON.stringify(closeResponse.data.errors, null, 2));
+              } else {
+                console.log(`✅ Successfully closed issue #${issue.number}: ${issue.title}`);
+              }
+            } catch (error) {
+              console.error(`❌ Error closing issue #${issue.number}:`, error.message);
             }
           }
 
@@ -654,8 +689,8 @@ jobs:
             } catch (error) {
               console.error('❌ Error checking practice branch sync:', error.message);
               console.error('📋 Full error:', error);
-            }
-          }
+             }
+           }
 
           async commitExistsInBranch(commitSha, branchName) {
             try {
@@ -738,22 +773,22 @@ jobs:
                 owner: this.organization,
                 repo: this.repository,
                 sha: 'main',
-                per_page: 100  // Increased from 50 to 100
+                per_page: 200  // Increased to 200 to catch more recent PRs
               });
               
               console.log(`📝 Retrieved ${response.data.length} commits from main branch`);
               
               // If we hit the limit, try to get more commits with pagination
               let allCommits = response.data;
-              if (response.data.length === 100) {
-                console.log('⚠️ Hit 100 commit limit - fetching more commits...');
+              if (response.data.length === 200) {
+                console.log('⚠️ Hit 200 commit limit - fetching more commits...');
                 
                 // Get the next page of commits
                 const nextPageResponse = await this.github.rest.repos.listCommits({
                   owner: this.organization,
                   repo: this.repository,
                   sha: 'main',
-                  per_page: 100,
+                  per_page: 200,
                   page: 2
                 });
                 
