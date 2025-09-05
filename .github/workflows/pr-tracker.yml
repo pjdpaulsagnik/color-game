@@ -263,7 +263,21 @@ jobs:
               const unsyncedCommits = [];
               
               console.log(`📋 Checking ${mainCommits.length} main branch commits for sync status...`);
-              console.log(`📝 Recent commits:`, mainCommits.slice(0, 5).map(c => `${c.sha.substring(0, 7)} - ${c.commit?.message?.split('\n')[0]}`));
+              console.log(`📝 Recent commits:`, mainCommits.slice(0, 10).map(c => `${c.sha.substring(0, 7)} - ${c.commit?.message?.split('\n')[0]}`));
+              
+              // Also check for recent PRs specifically
+              console.log(`🔍 Looking for recent PR commits...`);
+              const recentPRCommits = mainCommits.filter(commit => {
+                const message = commit.commit?.message || '';
+                return message.includes('#92') || message.includes('#93') || message.includes('#94') || 
+                       message.includes('#95') || message.includes('#96') || message.includes('#97') ||
+                       message.includes('#98') || message.includes('#99') || message.includes('#100');
+              });
+              
+              if (recentPRCommits.length > 0) {
+                console.log(`📋 Found ${recentPRCommits.length} recent PR commits:`, 
+                  recentPRCommits.map(c => `${c.sha.substring(0, 7)} - ${c.commit?.message?.split('\n')[0]}`));
+              }
               
               for (const commit of mainCommits) {
                  const changesExistInPractice = await this.checkIfChangesExistInBranch(commit, 'practice');
@@ -701,13 +715,37 @@ jobs:
 
           async getMainBranchCommits() {
             try {
+              console.log('📋 Fetching commits from main branch...');
+              
+              // Get more commits to ensure we catch recent PRs
               const response = await this.github.rest.repos.listCommits({
                 owner: this.organization,
                 repo: this.repository,
                 sha: 'main',
-                per_page: 50
+                per_page: 100  // Increased from 50 to 100
               });
-              return response.data;
+              
+              console.log(`📝 Retrieved ${response.data.length} commits from main branch`);
+              
+              // If we hit the limit, try to get more commits with pagination
+              let allCommits = response.data;
+              if (response.data.length === 100) {
+                console.log('⚠️ Hit 100 commit limit - fetching more commits...');
+                
+                // Get the next page of commits
+                const nextPageResponse = await this.github.rest.repos.listCommits({
+                  owner: this.organization,
+                  repo: this.repository,
+                  sha: 'main',
+                  per_page: 100,
+                  page: 2
+                });
+                
+                allCommits = [...response.data, ...nextPageResponse.data];
+                console.log(`📝 Retrieved total ${allCommits.length} commits from main branch (with pagination)`);
+              }
+              
+              return allCommits;
             } catch (error) {
               console.warn('Error fetching main branch commits:', error.message);
               return [];
@@ -868,9 +906,14 @@ jobs:
             const targetRepo = inputs.repository || this.repository;
             
             console.log(`Manual trigger for repository: ${targetRepo}`);
+            console.log(`Inputs:`, JSON.stringify(inputs, null, 2));
             
             if (inputs.force_refresh) {
+              console.log(`🔄 Force refresh requested - running scheduled update`);
               await this.handleScheduledUpdate();
+            } else {
+              console.log(`🔄 No specific action requested - running consolidated sync check`);
+              await this.createConsolidatedSyncIssue();
             }
           }
 
