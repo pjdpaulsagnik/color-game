@@ -1,5 +1,7 @@
-
+// ZEN TEST UPDATED
 console.log("connected");
+
+// FINALLY IT WILL WORK
 
 boxes = document.getElementsByClassName("box");
 
