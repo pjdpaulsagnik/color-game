@@ -134,10 +134,15 @@ jobs:
                          // Handle cross-branch sync when PR is merged to main
              if (action === 'closed' && pr.merged_at && pr.base.ref === 'main') {
                console.log(`🔄 PR #${pr.number} merged to main - checking cross-branch sync...`);
+               console.log(`📋 PR Title: ${pr.title}`);
+               console.log(`📅 Merged at: ${pr.merged_at}`);
+               console.log(`🌿 Base branch: ${pr.base.ref}`);
                
                // Instead of creating individual issues, trigger a refresh of the consolidated issue
                // This will automatically include the new merged PR in the list
+               console.log(`🚀 Triggering consolidated sync issue creation...`);
                await this.createConsolidatedSyncIssue();
+               console.log(`✅ Consolidated sync issue creation completed for PR #${pr.number}`);
              }
             
             const trackingData = {
@@ -235,8 +240,8 @@ jobs:
           }
 
                      async checkCrossBranchSync(commits) {
-            console.log('Checking cross-branch synchronization for main branch commits...');
-            
+             console.log('Checking cross-branch synchronization for main branch commits...');
+             
             // Instead of creating individual issues, we'll create one consolidated issue
             // that shows all commits that need syncing
             await this.createConsolidatedSyncIssue();
@@ -244,6 +249,8 @@ jobs:
 
           async createConsolidatedSyncIssue() {
             console.log('🔄 Creating consolidated sync issue for all unsynced commits...');
+            console.log(`🔑 ZenHub token present: ${!!this.zenhubToken}`);
+            console.log(`🏢 ZenHub workspace ID: ${process.env.ZENHUB_WORKSPACE_ID || 'NOT SET'}`);
             
             if (!this.zenhubToken || !process.env.ZENHUB_WORKSPACE_ID) {
               console.log('❌ Missing ZenHub configuration, skipping consolidated sync issue creation');
@@ -256,11 +263,12 @@ jobs:
               const unsyncedCommits = [];
               
               console.log(`📋 Checking ${mainCommits.length} main branch commits for sync status...`);
+              console.log(`📝 Recent commits:`, mainCommits.slice(0, 5).map(c => `${c.sha.substring(0, 7)} - ${c.commit?.message?.split('\n')[0]}`));
               
               for (const commit of mainCommits) {
-                const changesExistInPractice = await this.checkIfChangesExistInBranch(commit, 'practice');
-                
-                if (!changesExistInPractice) {
+                 const changesExistInPractice = await this.checkIfChangesExistInBranch(commit, 'practice');
+                 
+                 if (!changesExistInPractice) {
                   unsyncedCommits.push(commit);
                   console.log(`   ❌ Commit ${commit.sha.substring(0, 7)} needs syncing`);
                 } else {
@@ -284,13 +292,13 @@ jobs:
                 // Update existing issue with current list
                 await this.updateConsolidatedSyncIssue(existingIssue.id, unsyncedCommits);
                 console.log('✅ Updated existing consolidated sync issue');
-              } else {
+                 } else {
                 // Create new consolidated issue
                 await this.createNewConsolidatedSyncIssue(unsyncedCommits);
                 console.log('✅ Created new consolidated sync issue');
-              }
+                 }
               
-            } catch (error) {
+               } catch (error) {
               console.warn('Error creating consolidated sync issue:', error.message);
             }
           }
@@ -362,9 +370,13 @@ jobs:
 
               const issue = response.data.data?.createIssue?.issue;
               if (issue) {
+                console.log(`📋 Created issue with ID: ${issue.id}, Number: ${issue.number}`);
                 // Move issue to "iOS to be UPDATED" pipeline
+                console.log(`🔄 Moving issue to "iOS to be UPDATED" pipeline...`);
                 await this.moveIssueToPipeline(issue.id, 'iOS to be UPDATED');
                 console.log(`✅ Created consolidated sync issue with ${unsyncedCommits.length} unsynced commits`);
+              } else {
+                console.log(`❌ No issue created - response data:`, JSON.stringify(response.data, null, 2));
               }
             } catch (error) {
               console.warn('Error creating new consolidated sync issue:', error.message);
@@ -610,10 +622,10 @@ jobs:
               // Instead of checking individual commits, trigger a refresh of the consolidated issue
               // This will automatically update the issue with the current sync status
               await this.createConsolidatedSyncIssue();
-            } catch (error) {
-              console.warn('Error checking practice branch sync:', error.message);
-            }
-          }
+             } catch (error) {
+               console.warn('Error checking practice branch sync:', error.message);
+             }
+           }
 
           async commitExistsInBranch(commitSha, branchName) {
             try {
@@ -754,6 +766,11 @@ jobs:
 
           async moveIssueToPipeline(issueId, pipelineName) {
             try {
+              console.log(`🔄 Moving issue ${issueId} to ${pipelineName} pipeline...`);
+              
+              const pipelineId = await this.getPipelineId(pipelineName);
+              console.log(`📋 Pipeline ID for ${pipelineName}: ${pipelineId}`);
+              
               const moveMutation = `
                 mutation moveIssue($MoveIssueInput: MoveIssueInput!, $WorkspaceId: ID!) {
                   moveIssue(input: $MoveIssueInput) {
@@ -773,13 +790,15 @@ jobs:
               const variables = {
                 WorkspaceId: process.env.ZENHUB_WORKSPACE_ID || '68b5e4dd7bd773001775b072',
                 MoveIssueInput: {
-                  pipelineId: await this.getPipelineId(pipelineName),
+                  pipelineId: pipelineId,
                   issueId: issueId,
                   position: 0
                 }
               };
 
-              await axios.post('https://api.zenhub.com/public/graphql', {
+              console.log(`📋 Move variables:`, JSON.stringify(variables, null, 2));
+
+              const response = await axios.post('https://api.zenhub.com/public/graphql', {
                 query: moveMutation,
                 variables: variables
               }, {
@@ -789,9 +808,15 @@ jobs:
                 }
               });
 
-              console.log(`Moved issue to ${pipelineName} pipeline`);
+              if (response.data.errors) {
+                console.error(`❌ GraphQL errors moving issue:`, JSON.stringify(response.data.errors, null, 2));
+              } else {
+                console.log(`✅ Successfully moved issue to ${pipelineName} pipeline`);
+                console.log(`📋 Move response:`, JSON.stringify(response.data, null, 2));
+              }
             } catch (error) {
-              console.warn(`Error moving issue to ${pipelineName}:`, error.message);
+              console.error(`❌ Error moving issue to ${pipelineName}:`, error.message);
+              console.error(`📋 Full error:`, error);
             }
           }
 
