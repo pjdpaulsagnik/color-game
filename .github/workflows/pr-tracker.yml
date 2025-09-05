@@ -69,7 +69,12 @@ jobs:
 
           async run() {
             try {
-              console.log('Starting PR tracking...');
+              console.log('🚀 Starting PR tracking...');
+              console.log(`📅 Timestamp: ${new Date().toISOString()}`);
+              console.log(`🔧 Event type: ${process.env.GITHUB_EVENT_NAME}`);
+              console.log(`📦 Repository: ${process.env.GITHUB_REPOSITORY}`);
+              console.log(`🔑 ZenHub token present: ${!!process.env.ZENHUB_TOKEN}`);
+              console.log(`🏢 ZenHub workspace ID: ${process.env.ZENHUB_WORKSPACE_ID || 'NOT SET'}`);
               
               const eventType = process.env.GITHUB_EVENT_NAME;
               let eventData = {};
@@ -194,17 +199,24 @@ jobs:
             const ref = eventData.ref;
             const branch = ref.replace('refs/heads/', '');
             
-            console.log(`Handling push event to ${branch}`);
+            console.log(`🚀 Handling push event to ${branch}`);
+            console.log(`📋 Event data:`, JSON.stringify(eventData, null, 2));
+            console.log(`🔍 Branch detected: "${branch}"`);
+            console.log(`📝 Commits in push: ${commits.length}`);
             
             if (branch === 'main' || branch === 'master') {
+              console.log(`🔄 Main branch push detected - checking cross-branch sync`);
               // Check for commits that need to be synced to practice branch
               await this.checkCrossBranchSync(commits);
             } else if (branch === 'practice') {
+              console.log(`✅ Practice branch push detected - checking sync status`);
               // Check if any commits from main are now synced
               await this.checkPracticeBranchSync(commits);
             } else if (branch === 'zen-practice') {
               // This is our feature branch, no cross-branch sync needed here
               console.log('zen-practice branch push - no cross-branch sync needed');
+            } else {
+              console.log(`ℹ️ Push to ${branch} branch - no specific action needed`);
             }
             
             // Check if any commits reference PRs
@@ -630,16 +642,20 @@ jobs:
           }
 
                                async checkPracticeBranchSync(commits) {
-            console.log('Checking practice branch sync status...');
+            console.log('🔍 Checking practice branch sync status...');
+            console.log(`📋 Commits in practice push: ${commits.length}`);
             
             try {
               // Instead of checking individual commits, trigger a refresh of the consolidated issue
               // This will automatically update the issue with the current sync status
+              console.log('🔄 Triggering consolidated sync issue check...');
               await this.createConsolidatedSyncIssue();
-             } catch (error) {
-               console.warn('Error checking practice branch sync:', error.message);
-             }
-           }
+              console.log('✅ Practice branch sync check completed');
+            } catch (error) {
+              console.error('❌ Error checking practice branch sync:', error.message);
+              console.error('📋 Full error:', error);
+            }
+          }
 
           async commitExistsInBranch(commitSha, branchName) {
             try {
