@@ -482,14 +482,15 @@ jobs:
               }
             }
             
-            // Add a summary section with just commit messages for quick reference
+            // Add a summary section with just meaningful commit messages for quick reference
             body += `---\n\n`;
             body += `## 📝 Quick Commit Summary\n\n`;
             body += `**All pending commit messages:**\n\n`;
             
-            for (const commit of unsyncedCommits) {
-              const commitMessage = commit.commit?.message?.split('\n')[0] || 'No message';
-              body += `• ${commitMessage}\n`;
+            // Filter out merge commits and extract meaningful commit messages
+            const meaningfulCommits = this.extractMeaningfulCommitMessages(unsyncedCommits);
+            for (const commitMessage of meaningfulCommits) {
+              body += `• ***${commitMessage}***\n\n`;
             }
             
             body += `\n---\n\n`;
@@ -529,6 +530,42 @@ jobs:
             }
             
             return commitsByPR;
+          }
+
+          extractMeaningfulCommitMessages(commits) {
+            const meaningfulMessages = [];
+            
+            for (const commit of commits) {
+              const message = commit.commit?.message?.split('\n')[0] || 'No message';
+              
+              // Skip merge commits
+              if (this.isMergeCommit(message)) {
+                continue;
+              }
+              
+              // Skip empty or very short messages
+              if (message.length < 3) {
+                continue;
+              }
+              
+              meaningfulMessages.push(message);
+            }
+            
+            return meaningfulMessages;
+          }
+
+          isMergeCommit(message) {
+            // Check for common merge commit patterns
+            const mergePatterns = [
+              /^Merge pull request #\d+/i,
+              /^Merge branch/i,
+              /^Merge remote-tracking branch/i,
+              /^Merge commit/i,
+              /^Auto-merge/i,
+              /^Merge .* into/i
+            ];
+            
+            return mergePatterns.some(pattern => pattern.test(message));
           }
 
           async removeConsolidatedSyncIssue() {
