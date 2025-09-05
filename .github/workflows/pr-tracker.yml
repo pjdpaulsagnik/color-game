@@ -601,17 +601,17 @@ jobs:
               );
 
               if (syncIssue) {
-                console.log(`📋 Found consolidated sync issue #${syncIssue.number}, removing...`);
+                console.log(`📋 Found consolidated sync issue #${syncIssue.number}, moving to Done...`);
                 await this.closeIssue(syncIssue);
               } else {
                 console.log('ℹ️ No consolidated sync issue found to remove');
               }
               
-              // Also close any other issues in "iOS to be UPDATED" pipeline if all commits are synced
+              // Also move any other issues in "iOS to be UPDATED" pipeline if all commits are synced
               if (iosIssues.length > 0) {
-                console.log(`🔄 All commits synced - closing all ${iosIssues.length} issues in "iOS to be UPDATED" pipeline`);
+                console.log(`🔄 All commits synced - moving all ${iosIssues.length} issues in "iOS to be UPDATED" pipeline to Done`);
                 for (const issue of iosIssues) {
-                  console.log(`🔄 Closing issue #${issue.number}: ${issue.title}`);
+                  console.log(`🔄 Moving issue #${issue.number}: ${issue.title}`);
                   await this.closeIssue(issue);
                 }
               }
@@ -622,26 +622,25 @@ jobs:
 
           async closeIssue(issue) {
             try {
-              console.log(`🔄 Closing issue #${issue.number}: ${issue.title}`);
+              console.log(`🔄 Moving issue #${issue.number} to Done pipeline: ${issue.title}`);
               
-              // Close the issue (ZenHub doesn't have a direct delete mutation)
-              const closeMutation = `
-                mutation closeIssue($input: CloseIssueInput!) {
-                  closeIssue(input: $input) {
-                    issue {
+              // Instead of closing, move to "Done" pipeline
+              // First, let's try to find the "Done" pipeline
+              const pipelineQuery = `
+                query getPipelines($workspaceId: ID!) {
+                  workspace(id: $workspaceId) {
+                    pipelines {
                       id
-                      state
+                      name
                     }
                   }
                 }
               `;
 
-              const closeResponse = await axios.post('https://api.zenhub.com/public/graphql', {
-                query: closeMutation,
+              const pipelineResponse = await axios.post('https://api.zenhub.com/public/graphql', {
+                query: pipelineQuery,
                 variables: {
-                  input: {
-                    issueId: issue.id
-                  }
+                  workspaceId: process.env.ZENHUB_WORKSPACE_ID
                 }
               }, {
                 headers: {
@@ -650,13 +649,66 @@ jobs:
                 }
               });
 
-              if (closeResponse.data.errors) {
-                console.error(`❌ GraphQL errors closing issue #${issue.number}:`, JSON.stringify(closeResponse.data.errors, null, 2));
+              if (pipelineResponse.data.errors) {
+                console.error(`❌ Error fetching pipelines:`, JSON.stringify(pipelineResponse.data.errors, null, 2));
+                return;
+              }
+
+              const pipelines = pipelineResponse.data.data?.workspace?.pipelines || [];
+              console.log(`📋 Available pipelines:`, pipelines.map(p => p.name));
+              
+              // Look for "Done" pipeline or similar
+              const donePipeline = pipelines.find(p => 
+                p.name.toLowerCase().includes('done') || 
+                p.name.toLowerCase().includes('closed') ||
+                p.name.toLowerCase().includes('completed')
+              );
+
+              if (donePipeline) {
+                console.log(`📋 Moving issue to "${donePipeline.name}" pipeline`);
+                
+                // Move issue to Done pipeline
+                const moveMutation = `
+                  mutation moveIssue($input: MoveIssueInput!) {
+                    moveIssue(input: $input) {
+                      issue {
+                        id
+                        pipelineIssue {
+                          pipeline {
+                            name
+                          }
+                        }
+                      }
+                    }
+                  }
+                `;
+
+                const moveResponse = await axios.post('https://api.zenhub.com/public/graphql', {
+                  query: moveMutation,
+                  variables: {
+                    input: {
+                      issueId: issue.id,
+                      pipelineId: donePipeline.id
+                    }
+                  }
+                }, {
+                  headers: {
+                    'Authorization': `Bearer ${this.zenhubToken}`,
+                    'Content-Type': 'application/json'
+                  }
+                });
+
+                if (moveResponse.data.errors) {
+                  console.error(`❌ GraphQL errors moving issue #${issue.number}:`, JSON.stringify(moveResponse.data.errors, null, 2));
+                } else {
+                  console.log(`✅ Successfully moved issue #${issue.number} to "${donePipeline.name}" pipeline`);
+                }
               } else {
-                console.log(`✅ Successfully closed issue #${issue.number}: ${issue.title}`);
+                console.log(`⚠️ No "Done" pipeline found. Available pipelines:`, pipelines.map(p => p.name));
+                console.log(`ℹ️ Issue #${issue.number} will remain in current pipeline`);
               }
             } catch (error) {
-              console.error(`❌ Error closing issue #${issue.number}:`, error.message);
+              console.error(`❌ Error moving issue #${issue.number}:`, error.message);
             }
           }
 
